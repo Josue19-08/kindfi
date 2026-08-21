@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { logger } from '@/lib/logger'
 import { nextAuthOption } from '~/lib/auth/auth-options'
+import { requireOnboardingCompleteForAction } from '~/lib/onboarding/guard'
 import { referralDonationSchema } from '~/lib/schemas/referral.schemas'
 import { resolveUserStellarAddress } from '~/lib/services/resolve-user-stellar-address'
 import { GamificationContractService } from '~/lib/stellar/gamification-contracts'
@@ -21,6 +22,18 @@ export async function POST(req: NextRequest) {
 		const session = await getServerSession(nextAuthOption)
 		if (!session?.user?.id) {
 			return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+		}
+
+		// This handler is invoked in-process after a real donation completes
+		// (see contribution-side-effects.service.ts), but Next.js also exposes
+		// it as a public route, so an incomplete user's browser could otherwise
+		// call it directly to record a fake donation and farm referral rewards.
+		const onboardingFailure = await requireOnboardingCompleteForAction(session.user.id)
+		if (onboardingFailure) {
+			return NextResponse.json(
+				{ error: onboardingFailure.code, message: onboardingFailure.error },
+				{ status: 403 },
+			)
 		}
 
 		const body = await req.json()
